@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b6e8a">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>سبورة تمارين كرة اليد المتحركة</title>
+<style>
+:root{--bg:#f3f1ea;--ink:#1d2a2e;--mut:#5d6b6f;--card:#fff;--line:#d6d2c4;--acc:#0b6e8a;--accink:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10181b;--ink:#e8efe9;--mut:#9fb0b3;--card:#192327;--line:#2d3b40;--acc:#5ec2dd;--accink:#06222b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Tahoma,"Noto Sans Arabic",Arial,sans-serif;line-height:1.5}
+main{max-width:520px;margin:0 auto;padding:12px}
+h1{font-size:1.15rem;margin:4px 0 10px}
+canvas{width:100%;display:block;border:2px solid var(--line);border-radius:6px;touch-action:none;background:#fffbc4}
+.row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+button{font:inherit;font-size:.9rem;padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+button.on{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+button.go{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:700;min-width:90px}
+.lbl{font-size:.85rem;color:var(--mut)}
+.chip{min-width:38px;padding:6px 10px}
+textarea{width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);resize:vertical}
+#msg{min-height:1.4em;font-size:.85rem;color:var(--mut)}
+input.t{flex:1;min-width:0;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.item{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+</style>
+</head>
+<body>
+<main>
+<h1>سبورة تمارين كرة اليد المتحركة</h1>
+<canvas id="c" aria-label="ملعب كرة اليد"></canvas>
+
+<div class="lbl">أضف عنصراً ثم اسحبه في الملعب</div>
+<div class="row">
+<button data-add="a">+ مهاجم</button>
+<button data-add="d">+ مدافع</button>
+<button data-add="c">+ قمع</button>
+<button data-add="g">+ حارس</button>
+<button data-add="b">+ كرة</button>
+<button id="del">حذف المحدد</button>
+<button id="hold">الكرة مع المحدد</button>
+</div>
+
+<div class="lbl">توزيعات جاهزة تُضاف إلى الملعب</div>
+<div class="row"><button data-pre="def60">دفاع 6-0</button><button data-pre="def51">دفاع 5-1</button><button data-pre="att33">هجوم 3-3</button></div>
+<div class="lbl">المراحل: حرّك العناصر في كل مرحلة، والحركة تُحسب بين المراحل</div>
+<div class="row" id="frames"></div>
+<div class="row">
+<button id="addF">+ مرحلة جديدة</button>
+<button id="delF">حذف المرحلة</button>
+</div>
+
+<div class="row">
+<button class="go" id="play">تشغيل</button>
+<label class="lbl">السرعة <input type="range" id="spd" min="0.5" max="3" step="0.25" value="1"></label>
+<button id="trail" class="on">إظهار المسار</button>
+</div>
+
+<textarea id="note" rows="2" placeholder="اكتب شرح التمرين هنا"></textarea>
+<div class="row"><button id="reset">تمرين جديد</button></div>
+<div class="lbl">مكتبة التمارين</div>
+<div class="row"><input class="t" id="dname" type="text" placeholder="اسم التمرين"><button id="saveD" class="go">حفظ التمرين</button></div>
+<div id="lib"></div>
+<div id="msg">لتصدير فيديو: شغّل الحركة وسجّل الشاشة.</div>
+</main>
+
+<script>
+(function(){
+var W=400,H=460,cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var dpr=Math.min(window.devicePixelRatio||1,3);
+cv.width=W*dpr;cv.height=H*dpr;ctx.scale(dpr,dpr);
+var KEY='hb-board-v1';
+var S={objs:[],frames:[{}],cur:0,sel:null,playing:false,pos:0,trail:true,note:''};
+var cnt={a:0,d:0,c:0,b:0,g:0},nid=1;
+
+function save(){try{localStorage.setItem(KEY,JSON.stringify({S:{objs:S.objs,frames:S.frames,note:S.note},cnt:cnt,nid:nid}))}catch(e){}}
+function load(){try{var r=localStorage.getItem(KEY);if(!r)return;var d=JSON.parse(r);S.objs=d.S.objs||[];S.frames=d.S.frames||[{}];S.note=d.S.note||'';cnt=d.cnt||cnt;nid=d.nid||nid;document.getElementById('note').value=S.note}catch(e){}}
+
+function court(){
+ ctx.fillStyle='#fffbc4';ctx.fillRect(0,0,W,H);
+ var cx=W/2,gy=30;
+ ctx.fillStyle='#cfc9a0';ctx.fillRect(cx-45,0,90,gy);
+ ctx.beginPath();ctx.moveTo(cx-120,gy);ctx.lineTo(cx-45,gy);ctx.arc(cx-45,gy,0,0,0);
+ ctx.restore&&0;
+ ctx.fillStyle='#6ff3ff';ctx.strokeStyle='#1d4b57';ctx.lineWidth=1.5;
+ ctx.beginPath();ctx.moveTo(cx-135,gy);ctx.arc(cx-45,gy,90,Math.PI,Math.PI/2,true);ctx.lineTo(cx+45,gy+90);ctx.arc(cx+45,gy,90,Math.PI/2,0,true);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.setLineDash([7,6]);ctx.beginPath();ctx.moveTo(cx-165,gy);ctx.arc(cx-45,gy,120,Math.PI,Math.PI/2,true);ctx.lineTo(cx+45,gy+120);ctx.arc(cx+45,gy,120,Math.PI/2,0,true);ctx.stroke();ctx.setLineDash([]);
+ ctx.strokeStyle='#1d4b57';ctx.lineWidth=2;ctx.strokeRect(1,1,W-2,H-2);
+ ctx.beginPath();ctx.moveTo(cx-3,gy+90+0);ctx.lineWidth=1;
+}
+
+function ease(t){return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2}
+function fpos(k,id){
+ var f=S.frames[k],h=f._h,o=S.objs.find(function(x){return x.id===id});
+ if(o&&o.t==='b'&&h&&f[h])return [f[h][0]+13,f[h][1]-13];
+ return f[id]||[W/2,H/2];
+}
+function posAt(id,p){
+ var n=S.frames.length,i=Math.min(Math.floor(p),n-1),j=Math.min(i+1,n-1),t=ease(p-i);
+ var a=fpos(i,id),b=fpos(j,id);
+ return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+}
+function drawObj(o,x,y,sel){
+ ctx.save();ctx.translate(x,y);
+ if(o.t==='c'){ctx.fillStyle='#4a1a2c';ctx.beginPath();ctx.moveTo(0,-11);ctx.lineTo(10,9);ctx.lineTo(-10,9);ctx.closePath();ctx.fill()}
+ else if(o.t==='b'){ctx.fillStyle='#ff8a1f';ctx.strokeStyle='#7a3a00';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.fill();ctx.stroke()}
+ else{ctx.fillStyle={a:'#1f8a3b',d:'#c62f2f',g:'#7b3fb0'}[o.t];ctx.strokeStyle='#10231a';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,0,13,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(o.t==='g'?'ح':o.n,0,1)}
+ if(sel){ctx.strokeStyle='#0b6e8a';ctx.lineWidth=2.5;ctx.setLineDash([4,3]);ctx.beginPath();ctx.arc(0,0,19,0,7);ctx.stroke()}
+ ctx.restore();
+}
+function drawTrails(){
+ if(!S.trail||S.frames.length<2)return;
+ ctx.save();ctx.strokeStyle='rgba(29,42,46,.45)';ctx.lineWidth=1.5;ctx.setLineDash([3,4]);
+ S.objs.forEach(function(o){
+  if(o.t==='c')return;
+  ctx.beginPath();var m=false;
+  S.frames.forEach(function(f,k){var p=fpos(k,o.id);if(!p)return;if(!m){ctx.moveTo(p[0],p[1]);m=true}else ctx.lineTo(p[0],p[1])});
+  ctx.stroke();
+ });
+ ctx.restore();
+}
+function render(){
+ court();drawTrails();
+ var order={c:0,d:1,g:1,a:2,b:3};
+ S.objs.slice().sort(function(a,b){return order[a.t]-order[b.t]}).forEach(function(o){
+  var p=S.playing?posAt(o.id,S.pos):fpos(S.cur,o.id);
+  drawObj(o,p[0],p[1],!S.playing&&S.sel===o.id);
+ });
+}
+
+var last=0,SEG=1600;
+function tick(ts){
+ if(!S.playing)return;
+ var dt=ts-last;last=ts;
+ var spd=parseFloat(document.getElementById('spd').value);
+ S.pos+=dt/(SEG/spd);
+ var n=S.frames.length;
+ if(S.pos>=n-1+0.35)S.pos=0;
+ var shown=Math.min(Math.round(S.pos),n-1);
+ if(shown!==S.cur){S.cur=shown;buildFrames()}
+ render();requestAnimationFrame(tick);
+}
+function setPlay(on){
+ S.playing=on&&S.frames.length>1;
+ var b=document.getElementById('play');
+ b.textContent=S.playing?'إيقاف':'تشغيل';
+ if(S.playing){S.pos=0;S.sel=null;last=performance.now();requestAnimationFrame(tick)}
+ else{S.pos=S.cur;render()}
+ if(on&&S.frames.length<2)msg('أضف مرحلتين على الأقل لتشغيل الحركة.');
+}
+function msg(t){document.getElementById('msg').textContent=t}
+
+function buildFrames(){
+ var box=document.getElementById('frames');box.innerHTML='';
+ S.frames.forEach(function(f,i){
+  var b=document.createElement('button');b.className='chip'+(i===S.cur?' on':'');b.textContent=String(i+1);
+  b.setAttribute('aria-label','المرحلة '+(i+1));
+  b.onclick=function(){if(S.playing)setPlay(false);S.cur=i;S.sel=null;buildFrames();render()};
+  box.appendChild(b);
+ });
+}
+
+function xy(e){var r=cv.getBoundingClientRect();return [(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height]}
+var drag=null;
+cv.addEventListener('pointerdown',function(e){
+ if(S.playing)return;
+ var p=xy(e),hit=null,f=S.frames[S.cur];
+ for(var i=S.objs.length-1;i>=0;i--){var q=fpos(S.cur,S.objs[i].id);if(q&&Math.hypot(q[0]-p[0],q[1]-p[1])<20){hit=S.objs[i];break}}
+ S.sel=hit?hit.id:null;
+ if(hit){if(hit.t==='b'&&f._h){f[hit.id]=fpos(S.cur,hit.id);delete f._h}drag={id:hit.id,dx:f[hit.id][0]-p[0],dy:f[hit.id][1]-p[1]};cv.setPointerCapture(e.pointerId)}
+ render();
+});
+cv.addEventListener('pointermove',function(e){
+ if(!drag)return;var p=xy(e);
+ S.frames[S.cur][drag.id]=[Math.max(10,Math.min(W-10,p[0]+drag.dx)),Math.max(10,Math.min(H-10,p[1]+drag.dy))];
+ render();
+});
+function end(){if(drag){drag=null;save()}}
+cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
+
+document.querySelectorAll('[data-add]').forEach(function(b){
+ b.onclick=function(){
+  if(S.playing)setPlay(false);
+  var t=b.getAttribute('data-add'),id='o'+(nid++);
+  cnt[t]++;S.objs.push({id:id,t:t,n:cnt[t]});
+  var spot=[W/2+(S.objs.length%5-2)*34,H-60-Math.floor(S.objs.length/5)*10];
+  S.frames.forEach(function(f){f[id]=spot.slice()});
+  S.sel=id;render();save();
+ };
+});
+document.getElementById('del').onclick=function(){
+ if(!S.sel)return msg('اختر عنصراً أولاً بالنقر عليه.');
+ S.objs=S.objs.filter(function(o){return o.id!==S.sel});
+ S.frames.forEach(function(f){delete f[S.sel];if(f._h===S.sel)delete f._h});S.sel=null;render();save();
+};
+document.getElementById('addF').onclick=function(){
+ if(S.playing)setPlay(false);
+ var cp={};Object.keys(S.frames[S.cur]).forEach(function(k){cp[k]=S.frames[S.cur][k].slice()});
+ S.frames.splice(S.cur+1,0,cp);S.cur++;buildFrames();render();save();
+ msg('مرحلة '+(S.cur+1)+': حرّك العناصر إلى أماكنها الجديدة.');
+};
+document.getElementById('delF').onclick=function(){
+ if(S.frames.length<2)return msg('يجب أن تبقى مرحلة واحدة على الأقل.');
+ if(S.playing)setPlay(false);
+ S.frames.splice(S.cur,1);S.cur=Math.min(S.cur,S.frames.length-1);buildFrames();render();save();
+};
+document.getElementById('play').onclick=function(){setPlay(!S.playing)};
+document.getElementById('trail').onclick=function(){S.trail=!S.trail;this.classList.toggle('on',S.trail);render()};
+document.getElementById('note').oninput=function(){S.note=this.value;save()};
+document.getElementById('reset').onclick=function(){
+ if(!confirm('سيُمسح التمرين الحالي بالكامل. متابعة؟'))return;
+ setPlay(false);S={objs:[],frames:[{}],cur:0,sel:null,playing:false,pos:0,trail:S.trail,note:''};
+ cnt={a:0,d:0,c:0,b:0,g:0};document.getElementById('note').value='';buildFrames();render();save();
+};
+
+var PRE={def60:{t:'d',p:[[66,50],[91,94],[132,117],[268,117],[309,94],[334,50]]},def51:{t:'d',p:[[66,50],[100,100],[200,122],[300,100],[334,50],[200,185]]},att33:{t:'a',p:[[45,60],[355,60],[200,95],[110,215],[200,230],[290,215]]}};
+function addAt(t,x,y){var id='o'+(nid++);cnt[t]++;S.objs.push({id:id,t:t,n:cnt[t]});S.frames.forEach(function(f){f[id]=[x,y]})}
+document.querySelectorAll('[data-pre]').forEach(function(b){b.onclick=function(){
+ if(S.playing)setPlay(false);
+ var P=PRE[b.getAttribute('data-pre')];P.p.forEach(function(q){addAt(P.t,q[0],q[1])});
+ S.sel=null;render();save();msg('أُضيف التوزيع. اسحب أي لاعب لتعديل مكانه.');
+}});
+document.getElementById('hold').onclick=function(){
+ var o=S.objs.find(function(x){return x.id===S.sel});
+ if(!S.objs.some(function(x){return x.t==='b'}))return msg('أضف كرة أولاً.');
+ if(!o||o.t==='c'||o.t==='b')return msg('اختر لاعباً بالنقر عليه ليحمل الكرة.');
+ S.frames[S.cur]._h=o.id;render();save();
+ msg('الكرة مع هذا اللاعب في المرحلة '+(S.cur+1)+'. غيّر حامل الكرة في المرحلة التالية لتظهر التمريرة.');
+};
+var LK='hb-lib-v1';
+function getLib(){try{return JSON.parse(localStorage.getItem(LK)||'[]')}catch(e){return []}}
+function putLib(l){try{localStorage.setItem(LK,JSON.stringify(l));return true}catch(e){msg('تعذّر الحفظ في هذا المتصفح.');return false}}
+function openD(d){
+ setPlay(false);
+ S.objs=JSON.parse(JSON.stringify(d.objs));S.frames=JSON.parse(JSON.stringify(d.frames));S.note=d.note||'';S.cur=0;S.sel=null;
+ cnt={a:0,d:0,c:0,b:0,g:0};nid=1;
+ S.objs.forEach(function(o){cnt[o.t]=Math.max(cnt[o.t]||0,o.n||0);nid=Math.max(nid,parseInt(o.id.slice(1),10)+1)});
+ document.getElementById('note').value=S.note;document.getElementById('dname').value=d.name;
+ buildFrames();render();save();msg('تم فتح «'+d.name+'».');
+}
+function drawLib(){
+ var box=document.getElementById('lib'),l=getLib();box.innerHTML='';
+ if(!l.length){box.innerHTML='<div class="lbl">لا توجد تمارين محفوظة بعد. سمِّ تمرينك واضغط حفظ.</div>';return}
+ l.forEach(function(d,i){
+  var r=document.createElement('div');r.className='row item';
+  var n=document.createElement('span');n.textContent=d.name+' ('+d.frames.length+' مراحل)';n.style.flex='1';
+  var o=document.createElement('button');o.textContent='فتح';o.onclick=function(){openD(d)};
+  var x=document.createElement('button');x.textContent='حذف';
+  x.onclick=function(){if(!confirm('حذف «'+d.name+'»؟'))return;var L=getLib();L.splice(i,1);putLib(L);drawLib()};
+  r.appendChild(n);r.appendChild(o);r.appendChild(x);box.appendChild(r);
+ });
+}
+document.getElementById('saveD').onclick=function(){
+ var nm=document.getElementById('dname').value.trim();
+ if(!nm)return msg('اكتب اسماً للتمرين أولاً.');
+ if(!S.objs.length)return msg('أضف عناصر إلى الملعب قبل الحفظ.');
+ var L=getLib(),item={name:nm,objs:JSON.parse(JSON.stringify(S.objs)),frames:JSON.parse(JSON.stringify(S.frames)),note:S.note};
+ var k=L.findIndex(function(d){return d.name===nm});
+ if(k>=0)L[k]=item;else L.push(item);
+ if(putLib(L)){drawLib();msg('تم حفظ «'+nm+'».')}
+};
+load();buildFrames();render();drawLib();
+})();
+</script>
+<script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(){})})}</script>
+</body>
+</html>
